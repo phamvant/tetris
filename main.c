@@ -1,135 +1,141 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
+#include <pthread.h>
+#include <termios.h>
+#include "canvas.h"
 
-#define SIZE 20
-#define SSIZE 3
+///////////// GLOBAL VARIABLES /////////////
 
-char allGrid[3][SSIZE][SSIZE] = {
-    {{'0', '0', '0'}, {'0', '0', '0'}, {'0', '0', '0'}}, // grid3
-    {{'.', '.', '.'}, {'.', '0', '.'}, {'0', '0', '0'}}, // grid1
-    {{'.', '.', '.'}, {'0', '0', '0'}, {'.', '.', '.'}}, // grid2
+char allGrid[4][SSIZE][SSIZE] = {
+    {{'0', '0', '0'}, {'0', '0', '0'}, {'0', '0', '0'}}, // grid1
+    {{'.', '.', '.'}, {'.', '0', '.'}, {'0', '0', '0'}}, // grid2
+    {{'.', '.', '.'}, {'.', '.', '.'}, {'0', '0', '0'}}, // grid3
+    {{'.', '.', '.'}, {'0', '0', '.'}, {'.', '0', '0'}}, // grid4
 };
 
-typedef struct Object
-{
-    int cordX;
-    int cordY;
-    int rota;
-    char type[SSIZE][SSIZE];
-} Object;
+char keyboardInput;
 
-void makeCanvas(char canvas[][SIZE], int size)
+///////////// GLOBAL VARIABLES /////////////
+
+void navigate(Object *currentObject)
 {
-    for (int i = 0; i < size; i++)
+    switch (keyboardInput)
     {
-        for (int j = 0; j < size; j++)
+    case 'a':
+        currentObject->cordX--;
+        break;
+
+    case 'd':
+        currentObject->cordX++;
+        break;
+
+    case ' ':
+        rotate90Clockwise(currentObject);
+        break;
+
+    default:
+        break;
+    }
+
+    keyboardInput = '\0';
+}
+
+void *readInputThread()
+{
+    struct termios oldt, newt;
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+    char c;
+    int i = 0;
+    while (1)
+    {
+        if (read(STDIN_FILENO, &c, 1) > 0)
         {
-            canvas[i][j] = '.';
+            if (c == '\n' || i == 10)
+            {
+                keyboardInput = '\0';
+                i = 0;
+            }
+            else
+            {
+                keyboardInput = c;
+            }
         }
     }
 }
 
-void refresh(char canvas[][SIZE], int size)
+void *renderThead()
 {
-    char *p;
-    int count = 0;
-    for (p = &canvas[0][0]; p <= &canvas[SIZE - 1][SIZE - 1]; p++)
+    char canvas[SIZE][SIZE];
+    makeCanvas(canvas, SIZE);
+
+    Object *allObject;
+    int numObj = 1;
+    allObject = (Object *)malloc(sizeof(Object) * 1000);
+
+    initializeGrid(allObject, allGrid[1]);
+
+    Object *root;
+    root = allObject;
+
+    Object *currentObj;
+    currentObj = allObject;
+
+    int shoudStop = 0;
+
+    while (1)
     {
-        printf("%c ", *p);
-        count++;
-        if (count == SIZE)
+        if (keyboardInput)
         {
-            printf("\n");
-            count = 0;
+            navigate(currentObj);
         }
-    }
 
-    for (p = &canvas[0][0]; p < &canvas[SIZE - 1][SIZE - 1]; p++)
-    {
-        *p = '.';
-    }
-}
+        makeMatrix(canvas, root, numObj, &shoudStop);
+        refresh(canvas);
 
-void makeMatrix(char canvas[][SIZE], Object *obj)
-{
-    if (obj->cordY == SIZE - 1)
-    {
-        return;
-    }
+        usleep(150000);
+        system("clear");
 
-    int idx = 0;
-    for (int i = obj->cordY; i < obj->cordY + SSIZE; i++)
-    {
-        int idx1 = 0;
-        for (int j = obj->cordX; j < obj->cordX + SSIZE; j++)
+        if (shoudStop)
         {
-            canvas[i][j] = obj->type[idx][idx1];
-            idx1++;
-        }
-        idx++;
-    }
-    obj->cordY++;
-}
+            printf("STOP");
+            // GameOver - Free and create new Object
+            if (currentObj->cordY < 1)
+            {
+                free(allObject);
+                numObj = 1;
+                allObject = (Object *)malloc(sizeof(Object) * 1000);
+                initializeGrid(allObject, allGrid[1]);
+                root = allObject;
+                currentObj = allObject;
+                shoudStop = 0;
+                continue;
+            }
 
-void rotate90Clockwise(Object *obj)
-{
-    for (int i = 0; i < SSIZE / 2; i++)
-    {
-        for (int j = i; j < SSIZE - i - 1; j++)
-        {
-            char temp = obj->type[i][j];
-            obj->type[i][j] = obj->type[SSIZE - 1 - j][i];
-            obj->type[SSIZE - 1 - j][i] = obj->type[SSIZE - 1 - i][SSIZE - 1 - j];
-            obj->type[SSIZE - 1 - i][SSIZE - 1 - j] = obj->type[j][SSIZE - 1 - i];
-            obj->type[j][SSIZE - 1 - i] = temp;
+            int objType = rand() % (3 + 1);
+            currentObj++;
+            numObj++;
+            shoudStop = 0;
+            initializeGrid(currentObj, allGrid[objType]);
+            continue;
         }
+        currentObj->cordY++;
     }
-}
-
-void initializeGrid(Object *obj, char grid[][SSIZE])
-{
-    for (int i = 0; i < 3; i++)
-    {
-        for (int j = 0; j < 3; j++)
-        {
-            obj->type[i][j] = grid[i][j];
-        }
-    }
-    obj->cordY = 0;
-    int start = rand() % (5 + 1);
-    obj->cordX = 8;
+    return NULL;
 }
 
 int main()
 {
-    int size = SIZE;
-    char canvas[size][size], *p;
+    pthread_t readInputThreadId;
+    pthread_t renderThreadId;
 
-    makeCanvas(canvas, size); // Pass canvas by reference
-    Object obj1;
-
-    initializeGrid(&obj1, allGrid[1]);
-
-    while (1)
-    {
-
-        obj1.cordY++;
-        makeMatrix(canvas, &obj1);
-        // rotate90Clockwise(&obj1);
-        refresh(canvas, size);
-        usleep(100000);
-        // system("clear");
-        if (obj1.cordY > SIZE)
-        {
-            int objType = rand() % (2 + 1);
-            initializeGrid(&obj1, allGrid[objType]);
-        }
-    }
-
-    // for (p = &canvas[0][0]; p <= &canvas[SIZE - 1][SIZE - 1]; p++)
-    // {
-    //     printf("%d\n", *p);
-    // }
+    pthread_create(&readInputThreadId, NULL, readInputThread, NULL);
+    pthread_create(&renderThreadId, NULL, renderThead, NULL);
+    pthread_join(readInputThreadId, NULL);
+    pthread_join(renderThreadId, NULL);
 }
-
